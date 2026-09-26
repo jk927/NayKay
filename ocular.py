@@ -3,36 +3,23 @@ import json
 import math
 import time
 
-context.log_level = 'error'  # tystar pwntools "Opening connection..."-rader
+context.log_level = 'error'
 
 HOST = "socket.cryptohack.org"
 PORT = 13423
 
 BLOCK_SIZE = 16
-HEX_CHARS = "0123456789abcdef"          # klartexten är hex, så bara 16 möjliga byten per position
+HEX_CHARS = "0123456789abcdef"
 N_ARMS = len(HEX_CHARS)
 
-# --- Oracle-brus (se challange.py) ---
-# result = good ^ (rng.random() > 0.4):
-#   korrekt gissning (good=True)  -> result True med sannolikhet 0.4
-#   fel gissning     (good=False) -> result True med sannolikhet 0.6
-# Att hitta rätt byte är alltså "hitta armen med lägst True-frekvens" bland 16.
 P_CORRECT = 0.4
 P_WRONG = 0.6
 
-# Log-likelihood-steg för den frågade armen (Bayesiansk uppdatering).
-# Den gemensamma faktorn för alla andra armar cancellerar i normaliseringen,
-# så bara den frågade armens log-posterior ändras med +/- D.
 D = math.log(P_WRONG) - math.log(P_CORRECT)   # ~0.405
 
-# --- Budget & stoppkriterium ---
-# challange.py tillåter 12_000 frågor per anslutning innan den stänger.
-# Vi håller oss under med marginal och stoppar varje position när ledarens
-# posterior är säker nog. Tröskel ~0.999 gav bäst lyckandegrad i simulering
-# (~94% på EN runda); högre tröskel svälter sena positioner på budget.
 GLOBAL_BUDGET = 11_800
-POS_CAP = 1_500          # tak per position (nås sällan)
-POST_THRESH = 0.999      # stoppa när P(ledare) >= detta
+POS_CAP = 1_500         
+POST_THRESH = 0.999     
 
 VERBOSE = False
 
@@ -45,8 +32,6 @@ def build_probe(fake_prev, pos, guess, target_block):
 
 
 def send_probe(conn, query_ref, probe):
-    # Ping-pong: skicka en, läs en. Att pipelinea flera sendline innan recv
-    # triggar delayed-ACK/Nagle på serverns svar (~40 ms straff per klump).
     conn.sendline(json.dumps({"option": "unpad", "ct": probe.hex()}).encode())
     query_ref[0] += 1
     return json.loads(conn.recvline())["result"]
@@ -54,18 +39,12 @@ def send_probe(conn, query_ref, probe):
 
 def attack_position(conn, query_ref, pos, pad_val, prev_block, target_block,
                     intermediate, budget):
-    """Bayesiansk sekventiell sökning efter rätt hex-byte på en position.
-
-    Håller en (onormaliserad) log-posterior per arm. Varje fråga går till den
-    nuvarande ledaren; True sänker dess log-posterior med D, False höjer den.
-    Stoppar när ledarens normaliserade posterior >= POST_THRESH eller budgeten
-    tar slut.
-    """
+                        
     fake_prev = bytearray(BLOCK_SIZE)
     for i in range(pos + 1, BLOCK_SIZE):
         fake_prev[i] = intermediate[i] ^ pad_val
 
-    # förbered en probe per arm (hex-tecken)
+
     probes = []
     guesses = []
     for h in HEX_CHARS:
@@ -74,7 +53,7 @@ def attack_position(conn, query_ref, pos, pad_val, prev_block, target_block,
         probes.append(build_probe(fake_prev, pos, guess, target_block))
 
     logp = [0.0] * N_ARMS
-    S = float(N_ARMS)        # sum(exp(logp)) = N_ARMS när alla är 0
+    S = float(N_ARMS)
     used = 0
 
     def query(i):
@@ -87,13 +66,13 @@ def attack_position(conn, query_ref, pos, pad_val, prev_block, target_block,
 
     budget = min(budget, POS_CAP)
 
-    # warmup: en fråga per arm för startvärden
+    # warmup
     for i in range(N_ARMS):
         if used >= budget:
             break
         query(i)
 
-    # sekventiellt: fråga ledaren tills posteriorn är säker
+    # sekventiellt
     while used < budget:
         m = max(logp)
         if (_exp(m) / S) >= POST_THRESH:
@@ -101,7 +80,7 @@ def attack_position(conn, query_ref, pos, pad_val, prev_block, target_block,
         query(logp.index(m))
 
     winner = logp.index(max(logp))
-    # klartext-byte = hex-tecknet; intermediate = guess ^ pad_val
+  
     return guesses[winner] ^ pad_val
 
 
@@ -153,7 +132,7 @@ def try_once():
 
 if __name__ == "__main__":
     N_RUNS = 30
-    STOP_ON_FLAG = True   # sätt False för att alltid köra alla N_RUNS (ren statistik)
+    STOP_ON_FLAG = True 
 
     successes = 0
     query_counts = []
